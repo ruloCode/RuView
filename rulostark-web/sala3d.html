@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RuView en vivo: sala 3D</title>
+<style>
+  :root { --ink:#F4EEFF; --soft:#B9AEE0; --base:#120E33; --n1:#FF6B6B; --n2:#3DDC97; --n3:#5AB4FF; --ap:#FFB347; }
+  * { box-sizing:border-box; margin:0; }
+  html,body { height:100%; background:var(--base); color:var(--ink); font-family:"Avenir Next","Avenir",system-ui,sans-serif; overflow:hidden; }
+  canvas { display:block; }
+  #hud { position:fixed; inset:0; pointer-events:none; display:grid; grid-template-rows:auto 1fr auto; padding:3vh 3vw; }
+  h1 { font-family:"Avenir Next Condensed","Avenir Next",system-ui,sans-serif; font-weight:700; font-size:clamp(2rem,4.6vw,4.8rem); line-height:.95; max-width:18ch; }
+  #sub { color:var(--soft); font-size:clamp(.95rem,1.4vw,1.35rem); margin-top:1vh; max-width:52ch; }
+  #status { position:absolute; top:3vh; right:3vw; text-align:right; color:var(--soft); font-size:clamp(.85rem,1.1vw,1.1rem); }
+  #status b { color:var(--ink); }
+  #dot { display:inline-block; width:.7em; height:.7em; border-radius:50%; background:#6B6396; margin-right:.4em; }
+  #dot.live { background:var(--n2); box-shadow:0 0 .8em var(--n2); }
+  #dot.bad { background:var(--n1); }
+  footer { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.25fr); gap:2vw; align-items:end; }
+  .link { border-top:3px solid var(--c); padding-top:.9vh; background:linear-gradient(rgba(18,14,51,.0),rgba(18,14,51,.55)); }
+  .link h2 { font-size:clamp(.95rem,1.35vw,1.3rem); font-weight:600; }
+  .link h2 span { color:var(--soft); font-weight:400; }
+  .meter { height:.55rem; background:#2E2670; border-radius:1rem; margin:.8vh 0 .5vh; overflow:hidden; }
+  .meter i { display:block; height:100%; width:0; background:var(--c); border-radius:1rem; transition:width 200ms linear; }
+  .link p { font-size:clamp(.78rem,1vw,.98rem); color:var(--soft); }
+  .link.stale { opacity:.4; }
+  #note { font-size:clamp(.78rem,1vw,.98rem); color:var(--soft); line-height:1.45; }
+  #edit { position:fixed; left:50%; top:2vh; transform:translateX(-50%); background:var(--ap); color:#1B1446; padding:.4rem .9rem; border-radius:.5rem; font-weight:600; display:none; }
+  #token { position:fixed; inset:0; display:none; place-items:center; background:rgba(18,14,51,.92); z-index:5; pointer-events:auto; }
+  #token form { display:grid; gap:.8rem; width:min(34rem,90vw); }
+  #token input,#token button { font:inherit; padding:.7rem .9rem; border-radius:.5rem; border:1px solid #4B4199; background:#221A55; color:var(--ink); }
+  #token button { background:var(--ap); color:#1B1446; border:0; font-weight:600; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/ui/vendor/three/build/three.module.js",
+  "three/addons/": "/ui/vendor/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <header>
+    <h1 id="title">Enlaces WiFi en vivo</h1>
+    <p id="sub">Cada rayo es la señal del teléfono a un nodo. Brilla más cuando algo la perturba al cruzarla.</p>
+  </header>
+  <div></div>
+  <footer>
+    <div class="link" id="l1" style="--c:var(--n1)"><h2>Enlace 1 <span>izquierda</span></h2><div class="meter"><i></i></div><p>esperando</p></div>
+    <div class="link" id="l2" style="--c:var(--n2)"><h2>Enlace 2 <span>derecha</span></h2><div class="meter"><i></i></div><p>esperando</p></div>
+    <div class="link" id="l3" style="--c:var(--n3)"><h2>Enlace 3 <span>escenario</span></h2><div class="meter"><i></i></div><p>esperando</p></div>
+    <p id="note">Sin cámaras. Cada enlace se compara con su referencia de escenario vacío. Las siluetas son ilustrativas: hasta 3, una por enlace perturbado. No indican posición exacta ni número de personas.</p>
+  </footer>
+  <p id="status"><span id="dot"></span><b id="linkTxt">Conectando</b><br><span id="rate">&nbsp;</span><br><span id="ref"></span></p>
+</div>
+<div id="edit">Modo edición: 1/2/3 nodo, T teléfono, clic en el piso para ubicar. E para salir.</div>
+<div id="token"><form id="tokenForm">
+  <label for="tokenIn">Pega el API token del servidor (docker/.env)</label>
+  <input id="tokenIn" type="password" autocomplete="off" required>
+  <button type="submit">Guardar token</button>
+</form></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const TOKEN_KEY = 'ruview-api-token';
+const POS_KEY = 'ruview-sala3d-pos-v3';
+const COL = { 1: 0xFF6B6B, 2: 0x3DDC97, 3: 0x5AB4FF, T: 0xFFB347 };
+// Sala ~11 m (x) × 15 m (z) × 3 m. x: izquierda(-) → derecha(+); z: escenario(-) → puerta(+)
+const DEFAULT_POS = {
+  T: { x: -0.2, y: 0.8, z: -0.6 },   // teléfono (R): en medio del público
+  1: { x: -4.6, y: 0.05, z: -0.4 },  // izquierda, a media sala, junto a las sillas
+  2: { x: 5.0, y: 0.05, z: -2.8 },   // derecha, junto a la pared
+  3: { x: -0.2, y: 0.45, z: -6.6 },  // centro del escenario, a la derecha de la pantalla
+};
+let POS = JSON.parse(localStorage.getItem(POS_KEY) || 'null') || structuredClone(DEFAULT_POS);
+const $ = id => document.getElementById(id);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------------------------------------------------------------- escena
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x120E33);
+scene.fog = new THREE.Fog(0x120E33, 18, 40);
+const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(-9.5, 10.5, 15.5);  // desde la puerta, como la foto
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0.3, 0, -0.2);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.47;
+controls.update();
+
+scene.add(new THREE.HemisphereLight(0x8F86D9, 0x120E33, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 0.7); key.position.set(-4, 9, 6); scene.add(key);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.9, 0.5, 0.15);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+const mat = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, metalness: 0.05, ...o });
+function box(w, h, d, m, x, y, z) { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); scene.add(b); return b; }
+
+// piso y paredes
+const floor = box(11, 0.1, 15, mat(0x241C5A), 0, -0.05, 0);
+const wallM = mat(0x2B2268, { transparent: true, opacity: 0.55 });
+box(0.1, 3, 15, wallM, -5.5, 1.5, 0);     // pared izquierda
+box(0.1, 3, 15, wallM, 5.5, 1.5, 0);      // pared derecha
+box(11, 3, 0.1, wallM, 0, 1.5, -7.5);     // pared del escenario
+// escenario
+box(8, 0.4, 3, mat(0x5A3E8A), 0, 0.2, -6.0);
+const front = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 0.4, 48, 1, false, Math.PI / 2, Math.PI), mat(0x5A3E8A));
+front.scale.set(1, 1, 0.25); front.position.set(0, 0.2, -4.5); scene.add(front);
+box(3.8, 2.0, 0.05, new THREE.MeshBasicMaterial({ color: 0x4A4290 }), -1.2, 2.0, -7.42); // pantalla
+box(0.6, 1.1, 0.5, mat(0x7A5A3A), -2.6, 0.95, -6.2);   // atril
+box(0.6, 1.2, 0.5, mat(0x6A4A2E), 2.4, 1.0, -5.4);     // podio
+// puerta de salida (pared izquierda, al fondo)
+box(0.06, 2.1, 1.2, mat(0xC9A06A), -5.44, 1.05, 6.2);
+// filas de sillas escalonadas (derecha y centro), pasillo izquierdo libre
+const seatGeo = new THREE.BoxGeometry(0.42, 0.38, 0.4);
+const seatMat = mat(0x8C79C9, { transparent: true, opacity: 0.32 });
+const rows = 10, perRow = 15;
+const seats = new THREE.InstancedMesh(seatGeo, seatMat, rows * perRow);
+const tmp = new THREE.Object3D(); let si = 0;
+for (let r = 0; r < rows; r++) {
+  const z = -3.4 + r * 1.0, y = 0.25 + r * 0.12;
+  for (let c = 0; c < perRow; c++) {
+    tmp.position.set(-3.6 + c * 0.6, y, z); tmp.updateMatrix(); seats.setMatrixAt(si++, tmp.matrix);
+  }
+  box(9.2, r * 0.12 + 0.02, 0.95, mat(0x2E2670), 0.6, (r * 0.12) / 2, z);  // grada
+}
+scene.add(seats);
+
+// etiquetas (sprites de canvas)
+function label(text, color) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.font = '600 56px "Avenir Next", system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(18,14,51,0.75)'; g.beginPath(); g.roundRect(8, 16, 496, 96, 24); g.fill();
+  g.fillStyle = color; g.fillText(text, 256, 66);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  s.scale.set(1.9, 0.48, 1); s.renderOrder = 10; return s;
+}
+const hex = n => '#' + n.toString(16).padStart(6, '0');
+
+// marcadores
+const markers = {};
+function makeMarker(id) {
+  const g = new THREE.Group();
+  const isAP = id === 'T';
+  const core = new THREE.Mesh(isAP ? new THREE.BoxGeometry(0.18, 0.34, 0.04) : new THREE.SphereGeometry(0.16, 24, 16),
+    new THREE.MeshBasicMaterial({ color: COL[id] }));
+  core.position.y = isAP ? 0 : 0.16;
+  g.add(core);
+  const halo = new THREE.Mesh(new THREE.RingGeometry(0.25, 0.32, 40), new THREE.MeshBasicMaterial({ color: COL[id], transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
+  halo.rotation.x = -Math.PI / 2; halo.position.y = isAP ? -POS.T.y + 0.02 : 0.01; g.add(halo);
+  if (isAP) { const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, POS.T.y, 8), mat(0x6B6396)); pole.position.y = -POS.T.y / 2; g.add(pole); }
+  const l = label(isAP ? 'Teléfono (router)' : `Nodo ${id}`, hex(COL[id])); l.position.y = isAP ? 0.55 : 0.75; g.add(l);
+  g.userData = { core, halo };
+  scene.add(g); markers[id] = g;
+}
+['T', 1, 2, 3].forEach(makeMarker);
+function placeMarkers() { for (const id of ['T', 1, 2, 3]) { const p = POS[id]; markers[id].position.set(p.x, p.y, p.z); } }
+placeMarkers();
+
+// rayos teléfono → nodo con partículas
+const beams = {};
+const PCOUNT = 14;
+function buildBeam(id) {
+  if (beams[id]) { scene.remove(beams[id].group); }
+  const a = new THREE.Vector3(POS.T.x, POS.T.y, POS.T.z), b = new THREE.Vector3(POS[id].x, 0.2, POS[id].z);
+  const mid = a.clone().lerp(b, 0.5); mid.y += 0.6;
+  const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+  const group = new THREE.Group();
+  const tubeMat = new THREE.MeshBasicMaterial({ color: COL[id], transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false });
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.03, 8, false), tubeMat);
+  group.add(tube);
+  const pGeo = new THREE.SphereGeometry(0.06, 10, 8);
+  const pMat = new THREE.MeshBasicMaterial({ color: COL[id], transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+  const parts = [];
+  for (let i = 0; i < PCOUNT; i++) { const m = new THREE.Mesh(pGeo, pMat); m.userData.t = i / PCOUNT; group.add(m); parts.push(m); }
+  scene.add(group);
+  beams[id] = { group, curve, tube, tubeMat, pMat, parts };
+}
+[1, 2, 3].forEach(buildBeam);
+
+// siluetas ilustrativas: máximo 3, una por enlace perturbado (no es conteo de personas)
+function makeFigure(color) {
+  const g = new THREE.Group();
+  const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false });
+  const part = (r, len, x, y) => { const p = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 6, 12), m); p.position.set(x, y, 0); g.add(p); return p; };
+  part(0.2, 0.5, 0, 1.15);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 20, 14), m); head.position.y = 1.72; g.add(head);
+  const legL = part(0.09, 0.62, -0.1, 0.45), legR = part(0.09, 0.62, 0.1, 0.45);
+  const armL = part(0.07, 0.5, -0.3, 1.15), armR = part(0.07, 0.5, 0.3, 1.15);
+  [legL, legR, armL, armR].forEach(p => { p.geometry.translate(0, -0.3, 0); p.position.y += 0.3; });
+  const glow = new THREE.PointLight(color, 0, 4); glow.position.y = 1; g.add(glow);
+  g.visible = false; scene.add(g);
+  return { g, m, glow, legL, legR, armL, armR, op: 0, ph: Math.random() * 6 };
+}
+const figs = { 1: makeFigure(0xFFD0C8), 2: makeFigure(0xC9F5E2), 3: makeFigure(0xFFE2B0) };
+// Dónde se para cada silueta sobre su rayo (0 = teléfono, 1 = nodo). El enlace 3 termina en el
+// escenario: su silueta se dibuja de pie ahí (quien presenta).
+const FIG_T = { 1: 0.55, 2: 0.55, 3: 0.85 };
+
+// ---------------------------------------------------------------- datos
+const live = { nodes: {}, ok: false, lastOk: 0, hot: null, hotLevel: 0 };
+window.__live = live;
+for (const id of [1, 2, 3]) live.nodes[id] = { rssi: [], me: [], hist: [], d: 0, on: false, fps: 0, rssiNow: null, stale: true };
+
+const median = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
+function std(a) { if (a.length < 3) return 0; const m = a.reduce((s, v) => s + v, 0) / a.length; return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length); }
+function zscore(v, hist) { if (hist.length < 20) return 0; const m = median(hist); const mad = median(hist.map(x => Math.abs(x - m))) * 1.4826 || 1e-3; return (v - m) / mad; }
+
+function onSensing(d) {
+  const now = performance.now();
+  for (const n of d.nodes || []) {
+    const s = live.nodes[n.node_id]; if (!s || n.rssi_dbm == null) continue;
+    s.rssi.push([now, n.rssi_dbm]); s.rssiNow = n.rssi_dbm;
+    while (s.rssi.length && now - s.rssi[0][0] > 2000) s.rssi.shift();
+  }
+  for (const f of d.node_features || []) {
+    const s = live.nodes[f.node_id]; if (!s) continue;
+    s.fps = f.frame_rate_hz || 0; s.stale = !!f.stale;
+  }
+  live.ok = true; live.lastOk = now;
+}
+function onEdgeVitals(v) {
+  const s = live.nodes[v.node_id]; if (!s) return;
+  s.me.push([performance.now(), v.motion_energy || 0]);
+  while (s.me.length > 120) s.me.shift();
+}
+// Cada 250 ms, por enlace, con una ventana de RSSI de 2 s:
+//  - zVar:  variabilidad del RSSI (alguien moviéndose cruza el enlace)
+//  - zDrop: caída del RSSI medio (un cuerpo quieto bloquea el enlace)
+//  - zM:    energía de movimiento del firmware (ruidosa: pesa la mitad)
+// contra una referencia: la de "escenario vacío" capturada con la tecla C, o si no existe,
+// la mediana/MAD móvil del último minuto. Se usa el mayor z; empieza a contar desde z > 1.
+const REF_KEY = 'ruview-sala3d-ref-v1';
+let REF = JSON.parse(localStorage.getItem(REF_KEY) || 'null');
+let calib = null;   // { until, samples: {1:[[m,s]],...} }
+function win(s) { const a = s.rssi.map(x => x[1]); if (a.length < 5) return null; const m = a.reduce((x, y) => x + y, 0) / a.length; return { m, sd: std(a) }; }
+const mad = (a, m) => median(a.map(x => Math.abs(x - m))) * 1.4826;
+setInterval(() => {
+  const now = performance.now();
+  for (const id of [1, 2, 3]) {
+    const s = live.nodes[id], w = win(s);
+    if (!w) { s.d *= 0.8; continue; }
+    s.hist.push([w.m, w.sd]); if (s.hist.length > 240) s.hist.shift();
+    if (calib) (calib.samples[id] ||= []).push([w.m, w.sd]);
+    let ref = REF && REF.nodes[id];
+    if (!ref && s.hist.length >= 40) {
+      const old = s.hist.slice(0, -8), ms = old.map(x => x[0]), ss = old.map(x => x[1]);
+      const mM = median(ms), sM = median(ss);
+      ref = { mean: mM, meanMad: mad(ms, mM), sdMed: sM, sdMad: mad(ss, sM) };
+    }
+    let zVar = 0, zDrop = 0;
+    if (ref) {
+      zVar = (w.sd - ref.sdMed) / Math.max(ref.sdMad, 0.3);
+      zDrop = (ref.mean - w.m) / Math.max(ref.meanMad, 0.8);
+    }
+    const meVals = s.me.map(x => x[1]);
+    const zM = meVals.length > 20 ? zscore(meVals[meVals.length - 1], meVals.slice(0, -1)) : 0;
+    const z = Math.max(zVar, zDrop, 0.5 * zM);
+    s.dbg = { m: +w.m.toFixed(1), sd: +w.sd.toFixed(2), zVar: +zVar.toFixed(2), zDrop: +zDrop.toFixed(2), zM: +zM.toFixed(2), ref: REF ? 'vacío' : 'móvil' };
+    const target = Math.max(0, Math.min(1, (z - 1) / 3));
+    s.d += (target - s.d) * 0.3;
+    // histéresis: encender si d > 0.4 sostenido 0.5 s; apagar si d < 0.2 durante 1.5 s
+    if (s.d > 0.4) { s.hiSince ??= now; s.loSince = null; if (now - s.hiSince > 500) s.on = true; }
+    else if (s.d < 0.2) { s.loSince ??= now; s.hiSince = null; if (now - s.loSince > 1500) s.on = false; }
+    if (s.stale) s.on = false;
+  }
+  if (calib && now > calib.until) finishCalibration();
+  renderHud();
+}, 250);
+
+function startCalibration() {
+  calib = { until: performance.now() + 20000, samples: {} };
+  $('edit').style.display = 'block'; $('edit').textContent = 'Capturando referencia: deja el escenario vacío 20 s…';
+}
+function finishCalibration() {
+  const nodes = {};
+  for (const id of [1, 2, 3]) {
+    const a = calib.samples[id] || []; if (a.length < 20) continue;
+    const ms = a.map(x => x[0]), ss = a.map(x => x[1]), mM = median(ms), sM = median(ss);
+    nodes[id] = { mean: mM, meanMad: mad(ms, mM), sdMed: sM, sdMad: mad(ss, sM) };
+  }
+  REF = { at: new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }), nodes };
+  localStorage.setItem(REF_KEY, JSON.stringify(REF));
+  calib = null; $('edit').style.display = 'none';
+}
+
+function renderHud() {
+  let active = 0, fps = 0;
+  for (const id of [1, 2, 3]) {
+    const s = live.nodes[id], el = $('l' + id);
+    el.classList.toggle('stale', s.stale);
+    el.querySelector('i').style.width = (s.stale ? 0 : Math.round(s.d * 100)) + '%';
+    el.querySelector('p').textContent = s.stale ? 'sin señal: pulsa RESET en la placa' : `${Math.round(s.fps)} lecturas/s, señal ${s.rssiNow ?? '–'} dBm`;
+    if (!s.stale) { active++; fps += s.fps; }
+  }
+  const lost = performance.now() - live.lastOk > 3000;
+  $('dot').className = lost ? 'bad' : active === 3 ? 'live' : '';
+  $('linkTxt').textContent = lost ? 'Sin conexión con el servidor' : `${active} de 3 nodos transmitiendo`;
+  $('rate').textContent = lost ? 'Revisa ./start-rulostark-rust.sh' : `${Math.round(fps)} lecturas WiFi por segundo`;
+  $('ref').textContent = REF ? `Referencia: escenario vacío (${REF.at})` : 'Referencia: último minuto (pulsa C con el escenario vacío)';
+  const n = [1, 2, 3].filter(id => live.nodes[id].on);
+  $('title').textContent = !n.length ? 'Enlaces WiFi en vivo' : n.includes(3) && n.length === 1 ? 'Perturbación en el escenario' : `Perturbación en ${n.length === 1 ? 'el enlace ' + n[0] : 'los enlaces ' + n.join(', ')}`;
+}
+
+const token = () => localStorage.getItem(TOKEN_KEY) || '';
+$('tokenForm').addEventListener('submit', e => { e.preventDefault(); localStorage.setItem(TOKEN_KEY, $('tokenIn').value.trim()); $('token').style.display = 'none'; connect(); });
+
+let pollTimer = null;
+async function connect() {
+  if (!token()) { $('token').style.display = 'grid'; return; }
+  try {
+    const r = await fetch('/api/v1/ws-ticket', { method: 'POST', headers: { Authorization: 'Bearer ' + token() } });
+    if (r.status === 401) { $('token').style.display = 'grid'; return; }
+    const t = r.ok ? (await r.json()).ticket : null;
+    const ws = new WebSocket(`ws://${location.host}/ws/sensing` + (t ? '?ticket=' + encodeURIComponent(t) : ''));
+    ws.onmessage = e => { try { const d = JSON.parse(e.data); if (d.type === 'sensing_update') onSensing(d); else if (d.type === 'edge_vitals') onEdgeVitals(d); } catch {} };
+    ws.onopen = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+    ws.onclose = () => { startPolling(); setTimeout(connect, 2000); };
+  } catch { startPolling(); setTimeout(connect, 3000); }
+}
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    try { const r = await fetch('/api/v1/sensing/latest', { headers: { Authorization: 'Bearer ' + token() }, cache: 'no-store' }); if (r.ok) onSensing(await r.json()); } catch {}
+  }, 250);
+}
+connect();
+
+// ---------------------------------------------------------------- modo edición
+let editing = false, selected = null;
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+addEventListener('keydown', e => {
+  const k = e.key.toUpperCase();
+  if (k === 'E') { editing = !editing; selected = null; $('edit').style.display = editing ? 'block' : 'none'; }
+  else if (editing && ['1', '2', '3', 'T'].includes(k)) { selected = k === 'T' ? 'T' : +k; $('edit').textContent = `Ubicando ${k === 'T' ? 'teléfono' : 'nodo ' + k}: clic en el piso. E para salir.`; }
+  else if (k === 'A') controls.autoRotate = !controls.autoRotate;
+  else if (k === 'C' && !editing) startCalibration();
+  else if (k === 'X' && !editing) { REF = null; localStorage.removeItem(REF_KEY); }
+  else if (k === 'P') { const st = camera.position.z < 5; camera.position.set(...(st ? [-9.5, 10.5, 15.5] : [-3.5, 6.5, 6.5])); controls.target.set(...(st ? [0.3, 0, -0.2] : [0.2, 0.4, -3.8])); }
+  else if (k === 'R' && editing) { POS = structuredClone(DEFAULT_POS); localStorage.removeItem(POS_KEY); placeMarkers(); [1, 2, 3].forEach(buildBeam); }
+  else if (k === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+renderer.domElement.addEventListener('click', e => {
+  if (!editing || selected == null) return;
+  mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(floor)[0]; if (!hit) return;
+  POS[selected] = { x: +hit.point.x.toFixed(2), y: selected === 'T' ? POS.T.y : 0.05, z: +hit.point.z.toFixed(2) };
+  localStorage.setItem(POS_KEY, JSON.stringify(POS));
+  placeMarkers(); [1, 2, 3].forEach(buildBeam);
+});
+
+// ---------------------------------------------------------------- animación
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
+  for (const id of [1, 2, 3]) {
+    const b = beams[id], s = live.nodes[id], on = !s.stale && live.ok;
+    b.tubeMat.opacity = on ? 0.32 + 0.6 * s.d : 0.05;
+    b.pMat.opacity = on ? 0.55 + 0.45 * s.d : 0;
+    const speed = reduceMotion ? 0 : 0.12 + 0.6 * s.d;
+    for (const p of b.parts) {
+      p.userData.t = (p.userData.t + dt * speed) % 1;
+      p.position.copy(b.curve.getPointAt(p.userData.t));
+      p.scale.setScalar(0.6 + 1.6 * s.d);
+    }
+    const m = markers[id].userData;
+    m.halo.scale.setScalar(1 + (on ? s.d * 1.5 + 0.15 * Math.sin(t * 3) : 0));
+    m.core.material.color.setHex(on ? COL[id] : 0x4B4380);
+  }
+  markers.T.userData.halo.scale.setScalar(1 + 0.15 * Math.sin(t * 2));
+  // siluetas: una por cada enlace con perturbación sobre el umbral (ilustrativas)
+  for (const id of [1, 2, 3]) {
+    const f = figs[id], s = live.nodes[id];
+    const show = s.on;
+    f.op += ((show ? 0.25 + 0.55 * s.d : 0) - f.op) * Math.min(dt * 3, 1);
+    const p = beams[id].curve.getPointAt(FIG_T[id]);
+    const onStage = p.z < -4.4;
+    f.g.position.set(p.x, onStage ? 0.4 : 0, p.z);
+    f.g.lookAt(camera.position.x, f.g.position.y, camera.position.z);
+    f.m.opacity = f.op; f.glow.intensity = f.op * 3;
+    if (!reduceMotion) f.ph += dt * (2 + 5 * s.d);
+    const sw = Math.sin(f.ph) * 0.5 * Math.min(1, s.d * 2);
+    f.legL.rotation.x = sw; f.legR.rotation.x = -sw; f.armL.rotation.x = -sw * 0.8; f.armR.rotation.x = sw * 0.8;
+    f.g.visible = f.op > 0.01;
+  }
+  controls.update();
+  composer.render();
+}
+animate();
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

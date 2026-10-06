@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RuView en vivo: sala</title>
+<style>
+  :root {
+    --ink: #F4EEFF;
+    --ink-soft: #B9AEE0;
+    --base: #17123B;
+    --floor: #221A55;
+    --amber: #FFB347;
+    --magenta: #E0457B;
+    --n1: #FF6B6B;
+    --n2: #3DDC97;
+    --n3: #5AB4FF;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(120% 90% at 50% 0%, #241C5E 0%, var(--base) 60%);
+    color: var(--ink);
+    font-family: "Avenir Next", "Avenir", "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  header {
+    padding: 3.2vh 4vw 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+  #state {
+    font-family: "Avenir Next Condensed", "Avenir Next", system-ui, sans-serif;
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.4vw, 6.5rem);
+    line-height: 0.95;
+    letter-spacing: -0.01em;
+    max-width: 16ch;
+    transition: color 600ms ease;
+  }
+  #state[data-s="absent"] { color: var(--ink-soft); }
+  #state[data-s="present_still"] { color: var(--amber); }
+  #state[data-s="present_moving"] { color: #FFD08A; }
+  #sub {
+    margin-top: 1.2vh;
+    font-size: clamp(1rem, 1.6vw, 1.5rem);
+    color: var(--ink-soft);
+  }
+  #link {
+    text-align: right;
+    font-size: clamp(0.9rem, 1.2vw, 1.15rem);
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  #link b { color: var(--ink); font-weight: 600; }
+  #dot {
+    display: inline-block; width: 0.7em; height: 0.7em; border-radius: 50%;
+    background: #6B6396; margin-right: 0.45em; vertical-align: 0.02em;
+  }
+  #dot.live { background: var(--n2); box-shadow: 0 0 0.8em var(--n2); }
+  #dot.bad { background: var(--n1); }
+  main { position: relative; min-height: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  footer {
+    padding: 0 4vw 2.6vh;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.3fr);
+    gap: 2.2vw;
+    align-items: end;
+  }
+  .node { border-top: 3px solid var(--c); padding-top: 1vh; }
+  .node h2 { font-size: clamp(1rem, 1.5vw, 1.4rem); font-weight: 600; }
+  .node h2 span { color: var(--ink-soft); font-weight: 400; }
+  .node .meter { height: 0.55rem; background: #2E2670; border-radius: 1rem; margin: 0.9vh 0 0.6vh; overflow: hidden; }
+  .node .meter i { display: block; height: 100%; width: 0; background: var(--c); border-radius: 1rem; transition: width 250ms linear; }
+  .node p { font-size: clamp(0.8rem, 1.05vw, 1rem); color: var(--ink-soft); }
+  .node.stale { opacity: 0.4; }
+  #note { font-size: clamp(0.8rem, 1.05vw, 1rem); color: var(--ink-soft); line-height: 1.45; max-width: 46ch; }
+  #token {
+    position: fixed; inset: 0; display: none; place-items: center;
+    background: rgba(23, 18, 59, 0.92); z-index: 5;
+  }
+  #token form { display: grid; gap: 0.8rem; width: min(34rem, 90vw); }
+  #token label { font-size: 1.2rem; }
+  #token input, #token button {
+    font: inherit; padding: 0.7rem 0.9rem; border-radius: 0.5rem; border: 1px solid #4B4199;
+    background: #221A55; color: var(--ink);
+  }
+  #token button { background: var(--amber); color: #1B1446; border: 0; font-weight: 600; cursor: pointer; }
+  :focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+  @media (max-width: 760px) {
+    footer { grid-template-columns: repeat(3, 1fr); }
+    #note { grid-column: 1 / -1; }
+    header { flex-direction: column; align-items: flex-start; }
+    #link { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="state" data-s="absent" aria-live="polite">Conectando con los nodos</h1>
+    <p id="sub">Detección con la señal WiFi entre 3 nodos, sin cámaras</p>
+  </div>
+  <p id="link"><span id="dot"></span><b id="linkTxt">Sin datos</b><br><span id="rate">&nbsp;</span></p>
+</header>
+<main><canvas id="scene" aria-label="Sala con 3 nodos WiFi entre el público y una silueta que ilustra el estado detectado"></canvas></main>
+<footer>
+  <div class="node" id="n1" style="--c: var(--n1)"><h2>Nodo 1 <span>puerta, piso</span></h2><div class="meter"><i></i></div><p>esperando</p></div>
+  <div class="node" id="n2" style="--c: var(--n2)"><h2>Nodo 2 <span>sillas, derecha</span></h2><div class="meter"><i></i></div><p>esperando</p></div>
+  <div class="node" id="n3" style="--c: var(--n3)"><h2>Nodo 3 <span>adelante, izquierda</span></h2><div class="meter"><i></i></div><p>esperando</p></div>
+  <p id="note">La silueta ilustra el estado de toda la zona que cubren los nodos: vacía, quieta o en movimiento. No es una pose medida ni un conteo de personas. Se inclina hacia el nodo que registra más perturbación.</p>
+</footer>
+<div id="token"><form id="tokenForm">
+  <label for="tokenIn">Pega el API token del servidor (docker/.env)</label>
+  <input id="tokenIn" type="password" autocomplete="off" required>
+  <button type="submit">Guardar token</button>
+</form></div>
+
+<script>
+(() => {
+  const TOKEN_KEY = 'ruview-api-token';
+  const POLL_MS = 250;
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const css = getComputedStyle(document.documentElement);
+  const NODE_COL = { 1: css.getPropertyValue('--n1').trim(), 2: css.getPropertyValue('--n2').trim(), 3: css.getPropertyValue('--n3').trim() };
+  // Posición física en el escenario: u = izquierda→derecha, v = fondo→frente
+  // Layout real de la sala (vista desde la puerta, escenario al fondo)
+  const NODE_POS = { 1: { u: 0.07, v: 0.93, hgt: 0.03 }, 2: { u: 0.80, v: 0.42, hgt: 0.09 }, 3: { u: 0.40, v: 0.27, hgt: 0.09 } };
+  const FIG = { u: 0.26, v: 0.58 };   // pasillo izquierdo, entre los enlaces de los nodos
+  const STATE_TXT = {
+    absent: 'Sala vacía',
+    present_still: 'Hay presencia quieta en la sala',
+    present_moving: 'Hay movimiento en la sala',
+  };
+
+  const $ = id => document.getElementById(id);
+  const live = {
+    room: 'absent', shown: 'absent', pending: null, pendingSince: 0, conf: 0,
+    nodes: {}, ok: false, lastOk: 0, motion: 0, lean: 0,
+  };
+
+  // ------------------------------------------------------------- datos
+  function token() { return localStorage.getItem(TOKEN_KEY) || ''; }
+  $('tokenForm').addEventListener('submit', e => {
+    e.preventDefault();
+    localStorage.setItem(TOKEN_KEY, $('tokenIn').value.trim());
+    $('token').style.display = 'none';
+  });
+
+  async function poll() {
+    try {
+      const r = await fetch('/api/v1/sensing/latest', { headers: { Authorization: 'Bearer ' + token() }, cache: 'no-store' });
+      if (r.status === 401) { $('token').style.display = 'grid'; throw new Error('401'); }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      ingest(await r.json());
+      live.ok = true; live.lastOk = performance.now();
+    } catch (e) {
+      live.ok = false;
+    } finally {
+      setTimeout(poll, POLL_MS);
+    }
+  }
+
+  function ingest(d) {
+    const room = (d.room_inference && d.room_inference.classification) || (d.classification && d.classification.motion_level) || 'absent';
+    live.conf = (d.room_inference && d.room_inference.confidence) || 0;
+    if (d.source !== 'esp32') live.sourceWarn = d.source;
+    else live.sourceWarn = null;
+    // Histéresis: un estado nuevo debe sostenerse 0.8 s antes de mostrarse
+    const now = performance.now();
+    if (room !== live.shown) {
+      if (live.pending !== room) { live.pending = room; live.pendingSince = now; }
+      else if (now - live.pendingSince > 800) { live.shown = room; live.pending = null; }
+    } else live.pending = null;
+    live.room = room;
+
+    const nf = d.node_features || [];
+    let wsum = 0, lean = 0;
+    // Escala común para comparar nodos: máximo reciente compartido, mínimo 8
+    const maxNow = Math.max(0, ...nf.map(n => (n.features && n.features.motion_band_power) || 0));
+    live.scale = Math.max(8, maxNow, (live.scale || 8) * 0.998);
+    for (const n of nf) {
+      const id = n.node_id;
+      const v = (n.features && n.features.motion_band_power) || 0;
+      live.nodes[id] = {
+        v, norm: Math.min(v / live.scale, 1),
+        fps: n.frame_rate_hz || 0, rssi: n.rssi_dbm, stale: !!n.stale,
+        cls: n.classification && n.classification.motion_level,
+      };
+      if (!n.stale && NODE_POS[id]) { wsum += v; lean += v * (NODE_POS[id].u - 0.5); }
+    }
+    live.lean = wsum > 0 ? lean / wsum : 0;
+    live.motion = d.features ? Math.min((d.features.motion_band_power || 0) / 12, 1) : 0;
+    renderPanel();
+  }
+
+  function renderPanel() {
+    const s = live.shown;
+    const st = $('state');
+    st.dataset.s = s;
+    st.textContent = STATE_TXT[s] || s;
+    let fps = 0, active = 0;
+    for (const id of [1, 2, 3]) {
+      const n = live.nodes[id], el = $('n' + id);
+      if (!n) continue;
+      el.classList.toggle('stale', n.stale);
+      el.querySelector('i').style.width = (n.stale ? 0 : Math.round(n.norm * 100)) + '%';
+      el.querySelector('p').textContent = n.stale
+        ? 'sin señal: pulsa RESET en la placa'
+        : `${Math.round(n.fps)} lecturas/s, señal ${Math.round(n.rssi)} dBm`;
+      if (!n.stale) { fps += n.fps; active++; }
+    }
+    $('linkTxt').textContent = live.sourceWarn ? `Fuente: ${live.sourceWarn}` : `${active} de 3 nodos transmitiendo`;
+    $('rate').textContent = active ? `${Math.round(fps)} lecturas WiFi por segundo` : ' ';
+    $('dot').className = active === 3 && !live.sourceWarn ? 'live' : active ? '' : 'bad';
+  }
+
+  setInterval(() => {
+    if (performance.now() - live.lastOk > 3000) {
+      $('dot').className = 'bad';
+      $('linkTxt').textContent = 'Sin conexión con el servidor';
+      $('rate').textContent = 'Revisa ./start-rulostark-rust.sh';
+    }
+  }, 1000);
+
+  // ------------------------------------------------------------- escena
+  const cv = $('scene'), cx = cv.getContext('2d');
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = W * DPR; cv.height = H * DPR;
+    cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  addEventListener('resize', resize);
+
+  // Piso de la sala en perspectiva
+  function geo() {
+    const backY = H * 0.22, frontY = H * 0.96;
+    const backHalf = W * 0.25, frontHalf = W * 0.48, mid = W / 2;
+    return { backY, frontY, backHalf, frontHalf, mid };
+  }
+  function proj(u, v) {
+    const g = geo();
+    const y = g.backY + (g.frontY - g.backY) * v;
+    const half = g.backHalf + (g.frontHalf - g.backHalf) * v;
+    return { x: g.mid + (u - 0.5) * 2 * half, y, s: 0.55 + 0.45 * v };
+  }
+
+  // Rectángulo del piso (u0,v0)-(u1,v1) proyectado
+  function quad(u0, v0, u1, v1, fill) {
+    const a = proj(u0, v0), b = proj(u1, v0), c = proj(u1, v1), d = proj(u0, v1);
+    cx.fillStyle = fill;
+    cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.lineTo(c.x, c.y); cx.lineTo(d.x, d.y); cx.closePath(); cx.fill();
+  }
+
+  function drawFloor(t) {
+    const g = geo();
+    // escenario
+    cx.beginPath();
+    cx.moveTo(g.mid - g.backHalf, g.backY);
+    cx.lineTo(g.mid + g.backHalf, g.backY);
+    cx.lineTo(g.mid + g.frontHalf, g.frontY);
+    cx.quadraticCurveTo(g.mid, g.frontY + H * 0.06, g.mid - g.frontHalf, g.frontY);
+    cx.closePath();
+    const fg = cx.createLinearGradient(0, g.backY, 0, g.frontY);
+    fg.addColorStop(0, '#1D1650'); fg.addColorStop(1, '#2A2068');
+    cx.fillStyle = fg; cx.fill();
+    cx.save(); cx.clip();
+    // escenario al fondo
+    quad(0.12, 0.0, 0.62, 0.11, '#3A2E78');
+    // filas de sillas (derecha y centro), pasillo libre a la izquierda
+    for (let r = 0; r < 11; r++) {
+      const v0 = 0.20 + r * 0.068;
+      quad(0.36 - r * 0.005, v0, 0.985, v0 + 0.034, 'rgba(91,78,170,0.55)');
+    }
+    // brillo térmico bajo la silueta, proporcional al movimiento
+    const pres = presence.k;
+    if (pres > 0.01) {
+      const p = proj(FIG.u + live.lean * 0.5, FIG.v);
+      const r = W * (0.16 + 0.12 * live.motion);
+      const gl = cx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      gl.addColorStop(0, `rgba(255,179,71,${0.42 * pres})`);
+      gl.addColorStop(0.45, `rgba(224,69,123,${0.22 * pres})`);
+      gl.addColorStop(1, 'rgba(224,69,123,0)');
+      cx.fillStyle = gl;
+      cx.save(); cx.translate(p.x, p.y); cx.scale(1, 0.38); cx.translate(-p.x, -p.y);
+      cx.beginPath(); cx.arc(p.x, p.y, r, 0, Math.PI * 2); cx.fill(); cx.restore();
+    }
+    cx.restore();
+    // pared del fondo con pantalla
+    cx.fillStyle = 'rgba(185,174,224,0.05)';
+    cx.fillRect(g.mid - g.backHalf, g.backY - H * 0.15, g.backHalf * 2, H * 0.15);
+    const s0 = proj(0.20, 0), s1 = proj(0.48, 0);
+    cx.fillStyle = 'rgba(244,238,255,0.14)';
+    cx.fillRect(s0.x, g.backY - H * 0.12, s1.x - s0.x, H * 0.08);
+    // puerta de salida en la pared izquierda, cerca del espectador
+    const d0 = proj(0, 0.70), d1 = proj(0, 0.86);
+    cx.fillStyle = 'rgba(185,174,224,0.12)';
+    cx.beginPath();
+    cx.moveTo(d0.x, d0.y); cx.lineTo(d1.x, d1.y);
+    cx.lineTo(d1.x, d1.y - H * 0.22 * d1.s); cx.lineTo(d0.x, d0.y - H * 0.22 * d0.s); cx.closePath(); cx.fill();
+    cx.fillStyle = '#B9AEE0';
+    cx.font = `600 ${Math.round(H * 0.022)}px "Avenir Next", system-ui, sans-serif`;
+    cx.textAlign = 'center';
+    cx.fillText('salida', (d0.x + d1.x) / 2, d0.y - H * 0.24 * d0.s);
+    cx.fillText('escenario', proj(0.37, 0.05).x, proj(0.37, 0.05).y + H * 0.008);
+  }
+
+  // Ondas WiFi: enlaces entre nodos y anillos desde cada nodo
+  function drawLinks(t) {
+    const pairs = [[1, 2], [2, 3], [3, 1]];
+    for (const [a, b] of pairs) {
+      const na = live.nodes[a], nb = live.nodes[b];
+      if (!na || !nb || na.stale || nb.stale) continue;
+      const pa = nodeTop(a), pb = nodeTop(b);
+      const k = (na.norm + nb.norm) / 2;
+      cx.strokeStyle = `rgba(244,238,255,${0.12 + 0.35 * k})`;
+      cx.lineWidth = 1.5 + 2 * k;
+      cx.setLineDash([2, 10]);
+      cx.lineDashOffset = reduceMotion ? 0 : -t * 0.04;
+      cx.beginPath(); cx.moveTo(pa.x, pa.y);
+      const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2 - H * 0.04;
+      cx.quadraticCurveTo(mx, my, pb.x, pb.y); cx.stroke();
+      cx.setLineDash([]);
+    }
+  }
+  function nodeTop(id) {
+    const p = proj(NODE_POS[id].u, NODE_POS[id].v);
+    return { x: p.x, y: p.y - H * NODE_POS[id].hgt * p.s * 1.4, s: p.s };
+  }
+  function drawNodes(t, pred) {
+    for (const id of [1, 2, 3]) {
+      if (!pred(id)) continue;
+      const base = proj(NODE_POS[id].u, NODE_POS[id].v);
+      const top = nodeTop(id);
+      const n = live.nodes[id];
+      const col = NODE_COL[id];
+      const on = n && !n.stale;
+      // anillos sobre el piso
+      if (on) {
+        const rings = 3;
+        for (let i = 0; i < rings; i++) {
+          const ph = reduceMotion ? i / rings : ((t / (1400 - 700 * n.norm)) + i / rings) % 1;
+          const r = W * 0.03 + ph * W * (0.10 + 0.10 * n.norm) * base.s;
+          cx.strokeStyle = hexA(col, (1 - ph) * (0.25 + 0.55 * n.norm));
+          cx.lineWidth = 2;
+          cx.beginPath(); cx.ellipse(base.x, base.y, r, r * 0.32, 0, 0, Math.PI * 2); cx.stroke();
+        }
+      }
+      // poste y equipo
+      cx.strokeStyle = 'rgba(185,174,224,0.35)'; cx.lineWidth = 2;
+      cx.beginPath(); cx.moveTo(base.x, base.y); cx.lineTo(top.x, top.y); cx.stroke();
+      const r = 11 * top.s + 3;
+      cx.save();
+      if (on) { cx.shadowColor = col; cx.shadowBlur = 18 + 22 * n.norm; }
+      cx.fillStyle = on ? col : '#4B4380';
+      cx.beginPath(); cx.arc(top.x, top.y, r, 0, Math.PI * 2); cx.fill();
+      cx.restore();
+      cx.fillStyle = '#17123B';
+      cx.font = `700 ${Math.round(r * 1.15)}px "Avenir Next", system-ui, sans-serif`;
+      cx.textAlign = 'center'; cx.textBaseline = 'middle';
+      cx.fillText(String(id), top.x, top.y + 1);
+    }
+  }
+
+  // Silueta ilustrativa
+  const presence = { k: 0 };
+  let walkPh = 0, lastT = 0;
+  function drawFigure(t, dt) {
+    const target = live.shown === 'absent' ? 0 : 1;
+    presence.k += (target - presence.k) * Math.min(dt / 450, 1);
+    const k = presence.k;
+    const moving = live.shown === 'present_moving';
+    const speed = moving ? 0.0055 + 0.004 * live.motion : 0;
+    if (!reduceMotion) walkPh += dt * speed;
+
+    const p = proj(FIG.u + live.lean * 0.5, FIG.v);
+    const h = H * 0.42 * p.s;           // altura de la figura
+    const footY = p.y, x0 = p.x;
+    const breathe = reduceMotion ? 0 : Math.sin(t / 900) * 0.012;
+    const swing = moving ? Math.sin(walkPh) : 0;
+    const bob = moving ? Math.abs(Math.sin(walkPh)) * h * 0.02 : 0;
+    const lean = live.lean * 0.35;
+
+    // contorno de "escenario vacío"
+    if (k < 0.98) {
+      cx.save();
+      cx.globalAlpha = (1 - k) * 0.5;
+      cx.strokeStyle = '#6B6396'; cx.setLineDash([6, 8]); cx.lineWidth = 2;
+      figurePath(x0, footY, h, 0, 0, 0, 0);
+      cx.restore();
+    }
+    if (k < 0.02) return;
+
+    cx.save();
+    cx.globalAlpha = k;
+    // sombra
+    cx.fillStyle = 'rgba(0,0,0,0.35)';
+    cx.beginPath(); cx.ellipse(x0, footY, h * 0.16, h * 0.035, 0, 0, Math.PI * 2); cx.fill();
+    // cuerpo luminoso
+    cx.shadowColor = moving ? '#FFB347' : '#E0457B';
+    cx.shadowBlur = 28 + 30 * live.motion;
+    if (moving && !reduceMotion) {
+      for (const [lag, al] of [[0.9, 0.16], [0.45, 0.28]]) {
+        cx.globalAlpha = k * al;
+        cx.strokeStyle = cx.fillStyle = '#E0457B';
+        figurePath(x0, footY, h, Math.sin(walkPh - lag), lean, k, 1);
+      }
+      cx.globalAlpha = k;
+    }
+    cx.strokeStyle = moving ? '#FFE2B0' : '#FFD08A';
+    cx.fillStyle = cx.strokeStyle;
+    figurePath(x0, footY - bob, h * (1 + breathe), swing, lean, k, 1);
+    cx.restore();
+  }
+
+  // Silueta humana: torso relleno, extremidades con grosor variable
+  function figurePath(x, footY, h, swing, lean, k, solid) {
+    const hipY = footY - h * 0.48, shY = footY - h * 0.80;
+    const headR = h * 0.068, headY = shY - h * 0.115;
+    const tx = lean * h * 0.25;               // inclinación del torso
+    const a = swing * 0.45;                   // amplitud de zancada
+    const W_ = solid ? 1 : 0;
+    cx.lineCap = 'round'; cx.lineJoin = 'round';
+    const seg = (x1, y1, x2, y2, w) => {
+      cx.lineWidth = solid ? w : 2;
+      cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
+    };
+    const leg = (hx, ph) => {
+      const thigh = h * 0.245, shin = h * 0.245;
+      const back = ph < 0;                    // pierna trasera dobla la rodilla
+      const kx = hx + Math.sin(ph) * thigh, ky = hipY + Math.cos(ph) * thigh;
+      const sAng = ph - (back ? Math.abs(ph) * 1.1 : 0);
+      const fx = kx + Math.sin(sAng) * shin, fy = ky + Math.cos(sAng) * shin;
+      seg(hx, hipY, kx, ky, h * 0.092);
+      seg(kx, ky, fx, fy, h * 0.068);
+      seg(fx, fy, fx + h * 0.045, fy + h * 0.006, h * 0.04);   // pie
+    };
+    const arm = (sx, sy, ph, side) => {
+      const up = h * 0.17, fo = h * 0.16;
+      const ex = sx + Math.sin(ph) * up, ey = sy + Math.cos(ph) * up;
+      const fa = ph + side * 0.14 + Math.max(0, ph * side) * 0.5 * side;
+      seg(sx, sy, ex, ey, h * 0.066);
+      seg(ex, ey, ex + Math.sin(fa) * fo, ey + Math.cos(fa) * fo, h * 0.052);
+    };
+    // pierna y brazo del fondo primero
+    leg(x + h * 0.035, -a);
+    arm(x + tx + h * 0.10, shY + h * 0.03, a * 0.8 + 0.05, -1);   // brazo derecho: cuelga afuera, antebrazo hacia el cuerpo
+    // torso: hombros anchos, cintura, cadera
+    cx.lineWidth = solid ? h * 0.02 : 2;
+    cx.beginPath();
+    cx.moveTo(x + tx - h * 0.11, shY + h * 0.01);
+    cx.quadraticCurveTo(x + tx, shY - h * 0.03, x + tx + h * 0.11, shY + h * 0.01);
+    cx.lineTo(x + tx * 0.5 + h * 0.075, footY - h * 0.60);
+    cx.lineTo(x + h * 0.085, hipY + h * 0.02);
+    cx.lineTo(x - h * 0.085, hipY + h * 0.02);
+    cx.lineTo(x + tx * 0.5 - h * 0.075, footY - h * 0.60);
+    cx.closePath();
+    if (solid) { cx.fill(); cx.stroke(); } else cx.stroke();
+    // cuello y cabeza
+    seg(x + tx, shY, x + tx * 1.1, headY + headR * 0.6, h * 0.05);
+    cx.beginPath(); cx.arc(x + tx * 1.15, headY, headR, 0, Math.PI * 2);
+    if (solid) cx.fill(); else { cx.lineWidth = 2; cx.stroke(); }
+    // pierna y brazo del frente
+    leg(x - h * 0.035, a);
+    arm(x + tx - h * 0.10, shY + h * 0.03, -a * 0.8 - 0.05, 1);   // brazo izquierdo
+  }
+
+  function hexA(hex, a) {
+    const n = parseInt(hex.replace('#', ''), 16);
+    return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
+  }
+
+  function frame(t) {
+    const dt = lastT ? Math.min(t - lastT, 100) : 16; lastT = t;
+    cx.clearRect(0, 0, W, H);
+    drawFloor(t);
+    drawLinks(t);
+    drawNodes(t, id => NODE_POS[id].v < FIG.v);   // nodos del fondo detrás de la figura
+    drawFigure(t, dt);
+    drawNodes(t, id => NODE_POS[id].v >= FIG.v);  // nodos del frente delante
+    requestAnimationFrame(frame);
+  }
+
+  addEventListener('keydown', e => {
+    if (e.key === 'f' || e.key === 'F') {
+      document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    }
+  });
+
+  // ?preview=absent|present_still|present_moving: solo para ensayar el render.
+  // Muestra una franja visible y nunca usa datos del servidor.
+  const preview = new URLSearchParams(location.search).get('preview');
+  resize();
+  if (preview) {
+    const b = document.createElement('div');
+    b.textContent = 'Vista previa con datos no reales';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:.4rem;text-align:center;background:#E0457B;color:#fff;font-weight:600;z-index:9';
+    document.body.appendChild(b);
+    document.querySelector('header').style.paddingTop = '5.5vh';
+    const fake = (cls, m) => ({ source: 'esp32', room_inference: { classification: cls, confidence: 1 },
+      features: { motion_band_power: m }, node_features: [1, 2, 3].map(id => ({ node_id: id, stale: false,
+        frame_rate_hz: 45, rssi_dbm: -50, features: { motion_band_power: m * (id === 2 ? 1.4 : id === 1 ? 0.6 : 0.9) } })) });
+    const m = preview === 'present_moving' ? 9 : preview === 'present_still' ? 2.5 : 0.4;
+    setInterval(() => { ingest(fake(preview, m)); live.lastOk = performance.now(); }, POLL_MS);
+  } else {
+    if (!token()) $('token').style.display = 'grid';
+    poll();
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
