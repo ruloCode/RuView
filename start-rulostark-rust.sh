@@ -33,6 +33,7 @@ docker run -d --name rulostark-rust \
   -v "$PWD/rulostark-escenario.html:/app/ui/escenario.html:ro" \
   -v "$PWD/rulostark-vendor:/app/ui/vendor:ro" \
   -v "$PWD/rulostark-web:/app/ui/rulostark:ro" \
+  -v "$PWD/rulostark-web/observatory-original.html:/app/ui/observatory.html:ro" \
   --security-opt no-new-privileges:true --cap-drop ALL \
   --memory 1g --cpus 2 \
   ruvnet/wifi-densepose:latest >/dev/null
@@ -56,6 +57,7 @@ echo ""
 echo "  UI:     http://localhost:3000"
 echo "  Demo:   http://localhost:3000/ui/escenario.html  (tecla F = pantalla completa)"
 echo "  Sala3D: http://localhost:3000/ui/rulostark/sala3d.html"
+echo "  Observ: http://localhost:3000/ui/rulostark/observatory.html  (Observatory con datos reales)"
 echo "  Token:  $(grep '^RUVIEW_API_TOKEN=' docker/.env | cut -d= -f2)"
 echo "          (pégalo en los ajustes rápidos de la UI, campo API token)"
 echo "  IP Mac: $(ipconfig getifaddr en0 2>/dev/null || echo '?')  (target-ip de los ESP32, UDP 5005)"
