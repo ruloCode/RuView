@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RuloStark · El WiFi que ve moverse la sala, sin cámaras</title>
+<meta name="description" content="Demo abierta: tres nodos ESP32-S3 y un teléfono muestran en 3D cuándo alguien perturba cada enlace WiFi. Sin cámaras. Basado en RuView.">
+<meta property="og:title" content="RuloStark · WiFi que ve moverse la sala, sin cámaras">
+<meta property="og:description" content="Tres ESP32-S3, un teléfono y una sala 3D en vivo. Código abierto sobre RuView.">
+<meta property="og:image" content="https://rulocode.github.io/RuView/sala3d.png">
+<meta property="og:url" content="https://rulocode.github.io/RuView/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#120E33">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23120E33'/%3E%3Cpath d='M6 22 Q16 6 26 22' stroke='%23FFB347' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='23' r='3' fill='%235AB4FF'/%3E%3C/svg%3E">
+<style>
+  :root { --ink:#F4EEFF; --soft:#B9AEE0; --base:#120E33; --deep:#0B0826; --card:#1B1446; --line:#3A3180;
+          --n1:#FF6B6B; --n2:#3DDC97; --n3:#5AB4FF; --ap:#FFB347; }
+  * { box-sizing:border-box; margin:0; }
+  html { scroll-behavior:smooth; }
+  body { background:var(--base); color:var(--ink); font-family:"Avenir Next","Avenir","Segoe UI",system-ui,sans-serif; line-height:1.5;
+         background-image:radial-gradient(60rem 40rem at 85% -10%, #2B1F78 0%, transparent 60%), radial-gradient(40rem 30rem at -10% 30%, #1E1660 0%, transparent 60%); }
+  a { color:inherit; }
+  .wrap { width:min(72rem, 100% - 2.5rem); margin-inline:auto; }
+  h1,h2 { font-family:"Avenir Next Condensed","Avenir Next","Arial Narrow",system-ui,sans-serif; font-weight:700; letter-spacing:-.01em; }
+
+  /* hero */
+  .hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,.9fr); gap:3rem; align-items:center; padding:4.5rem 0 3rem; }
+  .eyebrow { display:inline-flex; align-items:center; gap:.5rem; font-size:.85rem; color:var(--soft); border:1px solid var(--line); border-radius:2rem; padding:.3rem .8rem; }
+  .eyebrow i { width:.55rem; height:.55rem; border-radius:50%; background:var(--n2); box-shadow:0 0 .7rem var(--n2); }
+  h1 { font-size:clamp(2.8rem, 7vw, 5.6rem); line-height:.92; margin:1.1rem 0 1.2rem; }
+  h1 em { font-style:normal; background:linear-gradient(90deg,var(--n1),var(--ap) 45%,var(--n2) 70%,var(--n3)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .lead { font-size:clamp(1.05rem,1.6vw,1.3rem); color:var(--soft); max-width:36rem; }
+  .lead b { color:var(--ink); font-weight:600; }
+  .cta { display:flex; flex-wrap:wrap; gap:.8rem; margin-top:2rem; }
+  .btn { display:inline-flex; align-items:center; gap:.55rem; padding:.85rem 1.25rem; border-radius:.7rem; font-weight:600; text-decoration:none; border:1px solid var(--line); background:var(--card); transition:transform .15s, border-color .15s; cursor:pointer; font:inherit; color:inherit; }
+  .btn:hover { transform:translateY(-2px); border-color:var(--soft); }
+  .btn.main { background:var(--ap); color:#1B1446; border-color:var(--ap); }
+  .btn svg { width:1.15rem; height:1.15rem; }
+
+  /* QR */
+  .qr { background:var(--card); border:1px solid var(--line); border-radius:1.2rem; padding:1.5rem; text-align:center; position:relative; }
+  .qr::before { content:""; position:absolute; inset:-1px; border-radius:inherit; padding:1px; background:linear-gradient(135deg,var(--n1),var(--ap),var(--n2),var(--n3));
+                -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; opacity:.75; pointer-events:none; }
+  .qr img { width:100%; height:auto; max-width:17rem; aspect-ratio:1; background:#fff; border-radius:.8rem; padding:.6rem; display:block; margin:0 auto; }
+  .qr h2 { font-size:1.6rem; margin-top:1rem; }
+  .qr p { color:var(--soft); font-size:.92rem; }
+  .qr code { color:var(--ap); font-size:.95rem; }
+  .qr .row { display:flex; gap:.5rem; justify-content:center; margin-top:1rem; flex-wrap:wrap; }
+  .qr .row .btn { padding:.55rem .9rem; font-size:.9rem; }
+
+  /* captura */
+  figure { margin:1rem 0 0; }
+  figure img { width:100%; height:auto; display:block; border-radius:1rem; border:1px solid var(--line); box-shadow:0 2rem 5rem -2rem #000; }
+  figcaption { color:var(--soft); font-size:.88rem; margin-top:.7rem; }
+
+  section { padding:4rem 0 0; }
+  section > h2 { font-size:clamp(2rem,4vw,3rem); line-height:1; margin-bottom:1.5rem; }
+  .steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1.2rem; counter-reset:s; }
+  .step { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--c); border-radius:.9rem; padding:1.3rem; counter-increment:s; }
+  .step::before { content:counter(s); font-family:"Avenir Next Condensed",system-ui,sans-serif; font-weight:700; font-size:2.2rem; color:var(--c); line-height:1; }
+  .step h3 { font-size:1.1rem; margin:.5rem 0 .35rem; }
+  .step p { color:var(--soft); font-size:.95rem; }
+
+  .honest { display:grid; grid-template-columns:1fr 1fr; gap:1.2rem; }
+  .honest > div { border-radius:.9rem; padding:1.3rem 1.4rem; border:1px solid var(--line); }
+  .yes { background:linear-gradient(160deg,rgba(61,220,151,.12),transparent 70%); }
+  .no  { background:linear-gradient(160deg,rgba(255,107,107,.12),transparent 70%); }
+  .honest h3 { font-size:1.1rem; margin-bottom:.6rem; }
+  .honest ul { padding-left:1.1rem; color:var(--soft); }
+  .honest li { margin:.3rem 0; }
+  .tag { display:inline-block; font-size:.72rem; font-weight:700; letter-spacing:.06em; border-radius:.3rem; padding:.1rem .4rem; background:#2E2670; color:var(--ap); vertical-align:middle; }
+  .note { color:var(--soft); font-size:.92rem; margin-top:1rem; max-width:52rem; }
+
+  pre { background:var(--deep); border:1px solid var(--line); border-radius:.9rem; padding:1.2rem 1.3rem; overflow-x:auto; font:500 .92rem/1.7 ui-monospace,"SF Mono",Menlo,monospace; position:relative; }
+  pre .c { color:#6F66A8; }
+  .copy { position:absolute; top:.6rem; right:.6rem; padding:.35rem .7rem; font-size:.8rem; }
+  .try { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:1.5rem; align-items:start; }
+  .keys { display:grid; grid-template-columns:auto 1fr; gap:.45rem .8rem; align-items:baseline; color:var(--soft); font-size:.95rem; }
+  kbd { font:600 .82rem ui-monospace,Menlo,monospace; background:var(--card); border:1px solid var(--line); border-bottom-width:3px; border-radius:.35rem; padding:.1rem .45rem; color:var(--ink); text-align:center; }
+  .try h3 { font-size:1.05rem; margin:1.2rem 0 .5rem; }
+  .try h3:first-child { margin-top:0; }
+  .try p { color:var(--soft); font-size:.95rem; }
+
+  footer { margin-top:5rem; padding:2rem 0 3rem; border-top:1px solid var(--line); color:var(--soft); font-size:.9rem; display:flex; flex-wrap:wrap; gap:1rem; justify-content:space-between; }
+
+  /* QR a pantalla completa (para proyectar) */
+  #big { position:fixed; inset:0; background:var(--base); display:none; place-items:center; z-index:10; padding:3vh; text-align:center; cursor:zoom-out; }
+  #big.on { display:grid; }
+  #big img { height:min(72vh,88vw); aspect-ratio:1; background:#fff; border-radius:1.5rem; padding:1.2rem; }
+  #big h2 { font-size:clamp(2rem,5vw,4rem); margin-bottom:2vh; }
+  #big p { color:var(--ap); font-size:clamp(1.1rem,2.4vw,2rem); margin-top:2vh; font-weight:600; }
+
+  @media (max-width: 52rem) {
+    .hero { grid-template-columns:1fr; padding-top:3rem; gap:2.2rem; }
+    .steps, .honest, .try { grid-template-columns:1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior:auto; } .btn { transition:none; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <span class="eyebrow"><i></i> Demo abierta · ESP32-S3 + RuView</span>
+      <h1>El WiFi que <em>ve moverse</em> la sala.</h1>
+      <p class="lead">Un teléfono hace de router y <b>tres nodos ESP32-S3</b> escuchan su señal. Cuando alguien cruza un enlace, el rayo se enciende en una sala 3D en vivo. <b>Sin cámaras.</b></p>
+      <div class="cta">
+        <a class="btn main" href="https://github.com/ruloCode/RuView/tree/rulostark/live-demo-sala3d">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+          Ver el código
+        </a>
+        <a class="btn" href="#probar">Pruébalo en tu Mac</a>
+        <a class="btn" href="https://github.com/ruvnet/RuView">Proyecto RuView</a>
+      </div>
+    </div>
+
+    <aside class="qr" aria-label="Código QR para compartir">
+      <img src="qr.svg" alt="Código QR que abre rulocode.github.io/RuView" width="272" height="272">
+      <h2>Escanea y compártelo</h2>
+      <p><code>rulocode.github.io/RuView</code></p>
+      <div class="row">
+        <button class="btn" id="showBig" type="button">Proyectar QR</button>
+        <a class="btn" href="qr.png" download="rulostark-qr.png">Descargar PNG</a>
+        <button class="btn" id="share" type="button">Compartir</button>
+      </div>
+    </aside>
+  </div>
+
+  <figure>
+    <img src="sala3d.png" alt="Sala 3D: escenario con tarima iluminada, tres nodos de colores conectados al teléfono por rayos de luz y medidores por enlace" width="1200" height="636" loading="lazy">
+    <figcaption>Captura real de la Sala 3D con los 3 nodos transmitiendo (5 de octubre de 2026). La silueta es ilustrativa: no indica posición exacta ni número de personas.</figcaption>
+  </figure>
+
+  <section>
+    <h2>Cómo funciona</h2>
+    <div class="steps">
+      <div class="step" style="--c:var(--n1)"><h3>Un teléfono emite WiFi</h3><p>El hotspot del teléfono es el transmisor. Entre él y cada nodo hay un «enlace»: la línea por la que viaja la señal.</p></div>
+      <div class="step" style="--c:var(--n2)"><h3>Tres ESP32-S3 escuchan</h3><p>Cada nodo mide la señal que recibe (RSSI y CSI) y la envía por UDP al servidor, decenas de veces por segundo.</p></div>
+      <div class="step" style="--c:var(--n3)"><h3>RuView la compara</h3><p>El servidor en Rust de RuView recibe los datos y la Sala 3D compara cada enlace con su referencia de escenario vacío. Si un cuerpo lo cruza, el rayo brilla.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Qué muestra y qué no</h2>
+    <div class="honest">
+      <div class="yes">
+        <h3>Sí muestra</h3>
+        <ul>
+          <li>Cuánto se perturba cada enlace frente al escenario vacío.</li>
+          <li>Actividad en la tarima, medida con los rayos que la cruzan.</li>
+          <li>Cuántos nodos transmiten y cuántas lecturas por segundo llegan.</li>
+        </ul>
+      </div>
+      <div class="no">
+        <h3>No muestra</h3>
+        <ul>
+          <li>Número de personas ni su posición exacta.</li>
+          <li>Pose, esqueleto ni signos vitales.</li>
+          <li>Nada comparable a una cámara: es una señal de radio, no una imagen.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note"><span class="tag">ESTADO</span> Demo cualitativa en vivo. No publicamos métricas de precisión: no hay un conjunto de prueba ni una medición reproducible todavía. Si haces una, ¡compártela!</p>
+  </section>
+
+  <section id="probar">
+    <h2>Pruébalo</h2>
+    <div class="try">
+      <div>
+        <pre><button class="btn copy" type="button" data-copy="cmd">Copiar</button><code id="cmd">git clone --depth 1 -b rulostark/live-demo-sala3d \
+  https://github.com/ruloCode/RuView.git
+cd RuView
+./start-rulostark-rust.sh</code></pre>
+        <p class="note">Abre <code>http://localhost:3000/ui/rulostark/sala3d.html</code> y pega el token que imprime el script. Para detener todo: <code>./start-rulostark-rust.sh stop</code>.</p>
+      </div>
+      <div>
+        <h3>Sin hardware</h3>
+        <p>El script crea <code>docker/.env</code> con <code>CSI_SOURCE=simulated</code>: verás la sala con datos <b>sintéticos</b>.</p>
+        <h3>Con tus ESP32-S3</h3>
+        <p>Provisiona los nodos según <a href="https://github.com/ruloCode/RuView/blob/rulostark/live-demo-sala3d/firmware/esp32-csi-node/README.md">firmware/esp32-csi-node</a>, apunta su <code>target-ip</code> a tu Mac (UDP 5005) y cambia a <code>CSI_SOURCE=esp32</code>.</p>
+        <h3>Requisitos</h3>
+        <p>Probado en macOS con Docker vía Colima y Python 3.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:2rem 0 .8rem;font-size:1.05rem">Teclas en la Sala 3D</h3>
+    <div class="keys">
+      <kbd>C</kbd><span>Captura la referencia con el escenario vacío</span>
+      <kbd>X</kbd><span>Borra la referencia</span>
+      <kbd>E</kbd><span>Modo edición: <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> o <kbd>T</kbd> y clic en el piso para ubicar nodos y teléfono</span>
+      <kbd>V</kbd><span>Cámara de referencia opcional: solo calcula zonas con movimiento, en tu navegador; no muestra ni graba la imagen</span>
+      <kbd>P</kbd><span>Cambia entre vista general y escenario</span>
+      <kbd>A</kbd><span>Rotación automática</span>
+    </div>
+  </section>
+
+  <footer>
+    <span>Hecho por <a href="https://github.com/ruloCode">Rulo</a> sobre <a href="https://github.com/ruvnet/RuView">RuView</a> de rUv (licencia MIT) y three.js.</span>
+    <span><a href="https://github.com/ruloCode/RuView/issues">Ideas o problemas: abre un issue</a></span>
+  </footer>
+</main>
+
+<div id="big" role="dialog" aria-modal="true" aria-label="Código QR en grande">
+  <div>
+    <h2>Escanea para probarlo</h2>
+    <img src="qr.svg" alt="Código QR que abre rulocode.github.io/RuView">
+    <p>rulocode.github.io/RuView</p>
+  </div>
+</div>
+
+<script>
+  const URL_PAGE = 'https://rulocode.github.io/RuView/';
+  const big = document.getElementById('big');
+  const openBig = () => { big.classList.add('on'); big.requestFullscreen?.().catch(() => {}); };
+  const closeBig = () => { big.classList.remove('on'); if (document.fullscreenElement) document.exitFullscreen(); };
+  document.getElementById('showBig').onclick = openBig;
+  big.onclick = closeBig;
+  addEventListener('keydown', e => { if (e.key === 'Escape') closeBig(); if (e.key === 'q' || e.key === 'Q') big.classList.contains('on') ? closeBig() : openBig(); });
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) big.classList.remove('on'); });
+  if (new URLSearchParams(location.search).has('qr')) big.classList.add('on');
+
+  const share = document.getElementById('share');
+  share.onclick = async () => {
+    const data = { title: 'RuloStark · WiFi sin cámaras', text: 'Tres ESP32-S3 y un teléfono muestran en 3D cuándo alguien cruza cada enlace WiFi.', url: URL_PAGE };
+    if (navigator.share) { try { await navigator.share(data); } catch {} return; }
+    await navigator.clipboard?.writeText(URL_PAGE); share.textContent = 'Enlace copiado';
+    setTimeout(() => share.textContent = 'Compartir', 1800);
+  };
+  document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+    await navigator.clipboard?.writeText(document.getElementById(b.dataset.copy).textContent);
+    b.textContent = 'Copiado'; setTimeout(() => b.textContent = 'Copiar', 1500);
+  });
+</script>
+</body>
+</html>
